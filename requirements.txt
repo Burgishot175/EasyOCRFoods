@@ -1,4 +1,3 @@
 streamlit
 easyocr
 opencv-python-headless
-git+https://github.com/Burgishot175/EasyOCRFoods.git
