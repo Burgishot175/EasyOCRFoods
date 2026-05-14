@@ -62,6 +62,27 @@ def load_ocr():
 reader = load_ocr()
 
 def preprocess_text(text_list):
+    # Обединяваме всичко в един низ и правим всичко в ГЛАВНИ букви
+    full_text = " ".join(text_list).upper()
+    
+    # 1. Сменяме кирилско 'Е' и символа за евро '€' с латинско 'E'
+    full_text = full_text.replace("Е", "E")
+    full_text = full_text.replace("€", "E") # ТОВА ЩЕ ОПРАВИ E120 ОТ СНИМКАТА
+    
+    # 2. Премахваме интервалите между 'E' и цифрите (напр. 'E 120' -> 'E120')
+    full_text = re.sub(r'E\s+', 'E', full_text)
+
+    # 3. Оправяме грешката O вместо 0 веднага след E и цифра
+    # Търсим E, последвано от цифра и буква O (напр. E4O7A -> E407A)
+    full_text = re.sub(r'(?<=E\d)O', '0', full_text) # ТОВА ЩЕ ОПРАВИ E407A
+    full_text = re.sub(r'(?<=E)O', '0', full_text)   # За случай като E05 -> E05
+    
+    # 4. Оправяме грешката I вместо 1 (ако се появи в E120 или E316)
+    full_text = re.sub(r'(?<=E)I', '1', full_text)
+    
+    return full_text
+
+def preprocess_text(text_list):
     # Обединяваме всичко в един низ
     full_text = " ".join(text_list).upper()
     
