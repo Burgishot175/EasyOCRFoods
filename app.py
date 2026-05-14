@@ -2,17 +2,19 @@ import streamlit as st
 import easyocr
 import numpy as np
 from PIL import Image
+import re
 
 # Конфигурация на страницата
 st.set_page_config(page_title="Скенер за вредни съставки", layout="centered")
 
 # РАЗШИРЕН СПИСЪК СЪС СЪСТАВКИ
+# Ключовете са нормализирани (Латинско E, без интервали)
 HARMFUL_INGREDIENTS = {
     # Оцветители
     "E102": "Тартразин (Оцветител) - може да предизвика алергични реакции.",
     "E104": "Хинолиново жълто (Оцветител) - забранено в някои страни.",
     "E110": "Сънсет жълто (Оцветител) - риск от хиперактивност при деца.",
-    "Е120": "Кармин/Корнихил",
+    "E120": "Кармин/Корнихил (Естествен оцветител, но потенциален алерген).",
     "E122": "Азорубин (Оцветител) - синтетичен червен оцветител.",
     "E123": "Амарант (Оцветител) - силно ограничен за употреба.",
     "E127": "Еритрозин (Оцветител) - съдържа йод, влияе на щитовидната жлеза.",
@@ -32,22 +34,24 @@ HARMFUL_INGREDIENTS = {
     "E226": "Калциев сулфит.",
     "E227": "Калциев хидрогенсулфит.",
     "E228": "Калиев хидрогенсулфит.",
-    "Е316": "Натриев ериторбат",
-    "Е407а": "Карагенан",
-    "Е412": "Гума гуар",
+    "E316": "Натриев ериторбат.",
+    
+    # Стабилизатори и емулгатори
+    "E407A": "Карагенан - потенциален дразнител на стомаха.",
+    "E412": "Гума гуар - сгъстител.",
     
     # Подсладители и овкусители
     "E621": "Мононатриев глутамат - овкусител, свързван с главоболие.",
     "E951": "Аспартам - изкуствен подсладител.",
     "E420": "Сорбитол - подсладител, в големи дози има слабително действие.",
-    "аспартам": "Аспартам (Aspartame) - изкуствен подсладител.",
-    "aspartame": "Aspartame - artificial sweetener.",
+    "АСПАРТАМ": "Аспартам (Aspartame) - изкуствен подсладител.",
+    "ASPARTAME": "Aspartame - artificial sweetener.",
     
-    # Мазнини и други
-    "палмово масло": "Палмово масло (Palm Oil) - високо съдържание на наситени мазнини.",
-    "palm oil": "Palm Oil - high saturated fat content.",
-    "хидрогенирани": "Хидрогенирани мазнини - източник на вредни транс-мазнини.",
-    "hydrogenated": "Hydrogenated fats - source of trans fats."
+    # Мазнини
+    "ПАЛМОВО МАСЛО": "Палмово масло (Palm Oil) - високо съдържание на наситени мазнини.",
+    "PALM OIL": "Palm Oil - high saturated fat content.",
+    "ХИДРОГЕНИРАНИ": "Хидрогенирани мазнини - източник на вредни транс-мазнини.",
+    "HYDROGENATED": "Hydrogenated fats - source of trans fats."
 }
 
 @st.cache_resource
@@ -56,17 +60,25 @@ def load_ocr():
 
 reader = load_ocr()
 
-def scan_text(image):
-    img_array = np.array(image)
-    results = reader.readtext(img_array, detail=0)
-    # Обединяваме текста и правим всички "Е" на латиница за по-лесно сравнение
-    full_text = " ".join(results).upper()
-    full_text = full_text.replace("Е", "E") # Заменя кирилско Е с латинско E
+def preprocess_text(text_list):
+    # Обединяваме всичко в един низ
+    full_text = " ".join(text_list).upper()
+    
+    # 1. Сменяме кирилско 'Е' с латинско 'E'
+    full_text = full_text.replace("Е", "E")
+    
+    # 2. Оправяме често срещана грешка: О (буква) вместо 0 (цифра) в Е-номерата
+    # Търсим буква E, следвана от цифри, където може да има O
+    full_text = re.sub(r'(?<=E)\d*O\d*', lambda m: m.group(0).replace('O', '0'), full_text)
+    
+    # 3. Премахваме интервалите между 'E' и цифрите (напр. 'E 102' -> 'E102')
+    full_text = re.sub(r'E\s+', 'E', full_text)
+    
     return full_text
 
 # Интерфейс
 st.title("🛡️ Скенер за съставки")
-st.write("Качете снимка на етикета, за да проверите за добавени оцветители, консерванти и подсладители.")
+st.write("Качете снимка на етикета за проверка.")
 
 source = st.radio("Изберете източник:", ("Качване на файл", "Камера"))
 
@@ -74,32 +86,33 @@ uploaded_file = None
 if source == "Качване на файл":
     uploaded_file = st.file_uploader("Изберете снимка...", type=["jpg", "jpeg", "png"])
 else:
-    uploaded_file = st.camera_input("Направете снимка на етикета")
+    uploaded_file = st.camera_input("Направете снимка")
 
 if uploaded_file is not None:
     image = Image.open(uploaded_file)
-    st.image(image, caption='Вашата снимка', use_container_width=True)
+    st.image(image, use_container_width=True)
     
-    with st.spinner('Анализирам текста... моля изчакайте.'):
-        detected_text = scan_text(image)
+    with st.spinner('Анализирам текста...'):
+        img_array = np.array(image)
+        results = reader.readtext(img_array, detail=0)
+        
+        # Обработка на текста за по-добро засичане
+        clean_text = preprocess_text(results)
         
         st.subheader("Разпознат текст:")
-        with st.expander("Виж целия текст от етикета"):
-            st.write(detected_text)
+        with st.expander("Виж извлечените данни"):
+            st.write(clean_text)
         
-        # Проверка за вредни съставки
+        # Проверка
         found_bad_stuff = []
         for key, description in HARMFUL_INGREDIENTS.items():
-            # Проверяваме ключа в текста (всичко е в горни регистри)
-            if key.upper() in detected_text:
+            if key in clean_text:
                 found_bad_stuff.append(description)
         
         st.divider()
         if found_bad_stuff:
-            st.warning("⚠️ Внимание! Намерени са потенциално вредни съставки:")
+            st.warning("⚠️ Внимание! Намерени са съставки:")
             for item in sorted(set(found_bad_stuff)):
                 st.write(f"- {item}")
         else:
-            st.success("✅ Не бяха открити критични съставки от разширения списък.")
-
-st.info("💡 Съвет: За най-добри резултати се уверете, че текстът на снимката е на фокус и добре осветен.")
+            st.success("✅ Не бяха открити критични съставки.")
