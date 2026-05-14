@@ -5,7 +5,7 @@ from PIL import Image
 import re
 
 # Настройка на страницата
-st.set_page_config(page_title="🛡️ Скенер за Е-номера", layout="centered")
+st.set_page_config(page_title="🛡️ Скенер за вредни съставки Е-номера", layout="centered", color="blue")
 
 # РАЗШИРЕН СПИСЪК СЪС СЪСТАВКИ ЗА ПРОВЕРКА (Ключовете са чисти Е-номера)
 INGREDIENT_DATABASE = {
