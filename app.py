@@ -4,37 +4,19 @@ import numpy as np
 from PIL import Image
 import re
 
-# Настройка на страницата
 st.set_page_config(page_title="🛡️ Скенер за съставки", layout="centered")
 
-# БАЗА ДАННИ (Е-номера и ключови думи)
-# Ключовете трябва да са с ГЛАВНИ БУКВИ за по-лесна проверка
+# База данни с нормализирани ключове (на Кирилица и Латиница за Е-номерата)
 INGREDIENT_DATABASE = {
-    # Оцветители
-    "E102": "Тартразин (Оцветител) - може да предизвика алергии.",
-    "E104": "Хинолиново жълто (Оцветител) - силно ограничен.",
-    "E110": "Сънсет жълто FCF (Оцветител).",
-    "E120": "Кармин/Кошенил (E120) - оцветител от насекоми, силен алерген.",
-    "E122": "Азорубин (Оцветител).",
-    "E250": "Натриев нитрит (E250) - консервант за месо, карциноген.",
-    "E316": "Натриев ериторбат (E316) - антиоксидант.",
-
-    # Стабилизатори и вредни думи
-    "E407": "Карагенан (E407) - риск от възпаление на червата.",
-    "E407A": "Преработени морски водорасли Euchema (E407a) - стабилизатор.",
-    "E412": "Гума гуар (E412) - сгъстител, възможен алерген.",
-    "E621": "Мононатриев глутамат (E621) - овкусител.",
-    "E951": "Аспартам (Подсладител).",
-    
-    # Ключови думи (Текст)
-    "МАЛТОДЕКСТРИН": "Малтодекстрин - въглехидрат, който рязко покачва кръвната захар.",
-    "ПАЛМОВО МАСЛО": "Палмово масло - високо съдържание на наситени мазнини.",
-    "ПАЛМОВА МАЗНИНА": "Палмова мазнина - високо съдържание на наситени мазнини.",
+    "E120": "Кармин/Кошенил - силен алерген от насекоми.",
+    "E316": "Натриев ериторбат - антиоксидант.",
+    "E407A": "Преработени морски водорасли Euchema - стабилизатор.",
+    "E412": "Гума гуар - сгъстител.",
+    "МАЛТОДЕКСТРИН": "Малтодекстрин - въглехидрат с много висок гликемичен индекс.",
+    "ПАЛМОВО": "Палмово масло/мазнина - високо съдържание на наситени мазнини.",
     "ХИДРОГЕНИРАНИ": "Хидрогенирани мазнини - източник на транс-мазнини.",
-    "АСПАРТАМ": "Аспартам - изкуствен подсладител.",
-    "ГЛУТАМАТ": "Глутамат - мощен овкусител, често свързван с главоболие.",
-    "ЗАХАР": "Внимание: Високо съдържание на захар.",
-    "НИТРИТ": "Нитрити - консерванти, потенциално карциногенни."
+    "ЗАХАР": "Внимание: Съдържа захар.",
+    "ГЛУТАМАТ": "Мононатриев глутамат - овкусител.",
 }
 
 @st.cache_resource
@@ -43,63 +25,71 @@ def load_ocr():
 
 reader = load_ocr()
 
+def normalize_to_cyrillic(text):
+    """ Превръща латински букви, които приличат на кирилски, в кирилски """
+    caps = {
+        'A': 'А', 'B': 'В', 'E': 'Е', 'K': 'К', 'M': 'М', 'H': 'Н', 
+        'O': 'О', 'P': 'Р', 'C': 'С', 'T': 'Т', 'X': 'Х', 'Y': 'У'
+    }
+    for lat, cyr in caps.items():
+        text = text.replace(lat, cyr)
+    return text
+
 def process_text_and_find_ingredients(text_list):
-    # 1. Обединяваме и нормализираме текста
-    full_text = " ".join(text_list).upper()
+    # 1. Обединяваме и правим всичко в ГЛАВНИ букви
+    raw_text = " ".join(text_list).upper()
     
-    # Почистване на символи, които OCR бърка
-    clean_text = full_text.replace("Е", "E").replace("€", "E")
+    # 2. Подготовка за Е-номера (Латиница)
+    text_for_e = raw_text.replace("Е", "E").replace("€", "E").replace("I", "1").replace("O", "0")
     
-    # СЪЗДАВАМЕ ВТОРА ВЕРСИЯ на текста без никакви интервали за търсене на думи
-    # Това помага, ако OCR е разчел "МАЛТО ДЕКСТРИН" с интервал по средата
-    text_no_spaces = clean_text.replace(" ", "")
+    # 3. Подготовка за думи (Кирилица)
+    # Нормализираме текста, за да хванем смесени букви (напр. МАЛТOдекстрин с латинско O)
+    text_for_words = normalize_to_cyrillic(raw_text)
+    
+    # Махаме интервалите, за да хванем "МАЛТО ДЕКСТРИН"
+    text_no_spaces = text_for_words.replace(" ", "")
 
     found_results = {}
 
-    # --- ТЪРСЕНЕ НА Е-НОМЕРА (Regex) ---
-    e_pattern = re.compile(r'E\s*(\d+)([A-Z]?)')
-    e_matches = e_pattern.findall(clean_text)
+    # --- Търсене на Е-номера (Regex) ---
+    e_pattern = re.compile(r'E\s*(\d+)([A-ZА-Я]?)')
+    e_matches = e_pattern.findall(text_for_e)
     for match in e_matches:
         code = "E" + match[0] + match[1]
         if code in INGREDIENT_DATABASE:
             found_results[code] = INGREDIENT_DATABASE[code]
 
-    # --- ТЪРСЕНЕ НА ТЕКСТОВИ СЪСТАВКИ ---
-    for key in INGREDIENT_DATABASE:
-        if not key.startswith("E"): # Търсим само думите
-            # Проверяваме в нормалния текст И в текста без интервали
-            if key in clean_text or key in text_no_spaces:
-                found_results[key] = INGREDIENT_DATABASE[key]
+    # --- Търсене на думи (Кирилица) ---
+    for key, desc in INGREDIENT_DATABASE.items():
+        if not key.startswith("E"):
+            if key in text_for_words or key in text_no_spaces:
+                found_results[key] = desc
 
-    return found_results, clean_text
+    return found_results, text_for_words
 
-# --- ИНТЕРФЕЙС ---
-st.title("🛡️ Пълен скенер за съставки")
-st.write("Качете снимка на етикета, за да за засечете Е-номера и вредни съставки (Малтодекстрин, мазнини и др.).")
+# --- Интерфейс ---
+st.title("🛡️ Професионален скенер за етикети")
 
-uploaded_file = st.file_uploader("Изберете снимка...", type=["jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("Качете снимка на етикета...", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
     image = Image.open(uploaded_file)
     st.image(image, use_container_width=True)
     
-    with st.spinner('Анализирам текста...'):
+    with st.spinner('Анализирам всяка дума...'):
         img_array = np.array(image)
         results = reader.readtext(img_array, detail=0)
         
-        found_ingredients, processed_text = process_text_and_find_ingredients(results)
+        found, debug_text = process_text_and_find_ingredients(results)
 
-        # Дебъг информация
-        with st.expander("Виж разпознатия текст"):
-            st.write(processed_text)
+        with st.expander("Виж разпознатия текст (пречистен)"):
+            st.write(debug_text)
 
         st.divider()
 
-        if found_ingredients:
-            st.warning("⚠️ Внимание! Открити са следните съставки:")
-            for item, desc in found_ingredients.items():
+        if found:
+            st.warning("⚠️ Открити съставки:")
+            for item, desc in found.items():
                 st.write(f"- **{item}**: {desc}")
         else:
-            st.success("✅ Не бяха открити критични съставки от базата данни.")
-
-st.info("Съвет: Списъкът може да се допълва с нови думи в речника на програмата.")
+            st.success("✅ Не бяха открити критични съставки.")
