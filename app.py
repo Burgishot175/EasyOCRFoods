@@ -45,19 +45,18 @@ reader = load_ocr()
 
 def process_text_and_find_ingredients(text_list):
     # 1. Обединяваме и нормализираме текста
-    raw_text = " ".join(text_list).upper()
+    full_text = " ".join(text_list).upper()
     
-    # Почистване на OCR грешки
-    clean_text = raw_text.replace("Е", "E").replace("€", "E")
-    clean_text = clean_text.replace("I", "1").replace("L", "1")
+    # Почистване на символи, които OCR бърка
+    clean_text = full_text.replace("Е", "E").replace("€", "E")
     
-    # Специална корекция за E407a (O вместо 0)
-    clean_text = re.sub(r'(?<=E4)O(?=7)', '0', clean_text)
-    clean_text = clean_text.replace("E4O7A", "E407A")
+    # СЪЗДАВАМЕ ВТОРА ВЕРСИЯ на текста без никакви интервали за търсене на думи
+    # Това помага, ако OCR е разчел "МАЛТО ДЕКСТРИН" с интервал по средата
+    text_no_spaces = clean_text.replace(" ", "")
 
     found_results = {}
 
-    # --- СТЪПКА А: Търсене на Е-номера чрез Regex (заради грешки като "E 120") ---
+    # --- ТЪРСЕНЕ НА Е-НОМЕРА (Regex) ---
     e_pattern = re.compile(r'E\s*(\d+)([A-Z]?)')
     e_matches = e_pattern.findall(clean_text)
     for match in e_matches:
@@ -65,11 +64,11 @@ def process_text_and_find_ingredients(text_list):
         if code in INGREDIENT_DATABASE:
             found_results[code] = INGREDIENT_DATABASE[code]
 
-    # --- СТЪПКА Б: Търсене на цели думи ---
+    # --- ТЪРСЕНЕ НА ТЕКСТОВИ СЪСТАВКИ ---
     for key in INGREDIENT_DATABASE:
-        # Проверяваме дали ключът е дума (не започва с Е+цифра)
-        if not re.match(r'^E\d+', key):
-            if key in clean_text:
+        if not key.startswith("E"): # Търсим само думите
+            # Проверяваме в нормалния текст И в текста без интервали
+            if key in clean_text or key in text_no_spaces:
                 found_results[key] = INGREDIENT_DATABASE[key]
 
     return found_results, clean_text
