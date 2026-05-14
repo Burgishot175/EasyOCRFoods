@@ -5,9 +5,10 @@ from PIL import Image
 import re
 
 # Настройка на страницата
-st.set_page_config(page_title="🛡️ Скенер за вредни съставки Е-номера", layout="centered")
+st.set_page_config(page_title="🛡️ Скенер за съставки", layout="centered")
 
-# РАЗШИРЕН СПИСЪК СЪС СЪСТАВКИ ЗА ПРОВЕРКА (Ключовете са чисти Е-номера)
+# БАЗА ДАННИ (Е-номера и ключови думи)
+# Ключовете трябва да са с ГЛАВНИ БУКВИ за по-лесна проверка
 INGREDIENT_DATABASE = {
     # Оцветители
     "E102": "Тартразин (Оцветител) - може да предизвика алергии.",
@@ -15,81 +16,69 @@ INGREDIENT_DATABASE = {
     "E110": "Сънсет жълто FCF (Оцветител).",
     "E120": "Кармин/Кошенил (E120) - оцветител от насекоми, силен алерген.",
     "E122": "Азорубин (Оцветител).",
-    "E124": "Понсо 4R (Оцветител).",
-    "E127": "Еритрозин (Оцветител) - съдържа йод.",
-    "E129": "Алура червено AC (Оцветител).",
-    "E131": "Патент синьо V (Оцветител).",
-    "E132": "Индиго кармин (Оцветител).",
-    "E133": "Брилянтно синьо FCF (Оцветител).",
-    "E151": "Брилянтно черно BN (Оцветител).",
-    
-    # Консерванти
-    "E200": "Сорбинова киселина (Консервант).",
-    "E202": "Калиев сорбат (Консервант).",
-    "E211": "Натриев бензоат (Консервант) - риск в комбинация с Вит. С.",
-    "E220": "Серен диоксид (Консервант) - сулфит, алерген.",
     "E250": "Натриев нитрит (E250) - консервант за месо, карциноген.",
     "E316": "Натриев ериторбат (E316) - антиоксидант.",
 
-    # Стабилизатори и емулгатори
+    # Стабилизатори и вредни думи
     "E407": "Карагенан (E407) - риск от възпаление на червата.",
     "E407A": "Преработени морски водорасли Euchema (E407a) - стабилизатор.",
-    "E407а": "Преработени морски водорасли Euchema (E407a) - стабилизатор.",
-    "Е4О7а": "Преработени морски водорасли Euchema (E407a) - стабилизатор.",
     "E412": "Гума гуар (E412) - сгъстител, възможен алерген.",
-    "Малтодекатрин": "Въглехидрат който рязко покачва кръвната захар",
-    "Малтодекстрин": "Въглехидрат който рязко покачва кръвната захар",
-    
-    # Овкусители и подсладители
     "E621": "Мононатриев глутамат (E621) - овкусител.",
     "E951": "Аспартам (Подсладител).",
+    
+    # Ключови думи (Текст)
+    "МАЛТОДЕКСТРИН": "Малтодекстрин - въглехидрат, който рязко покачва кръвната захар.",
+    "ПАЛМОВО МАСЛО": "Палмово масло - високо съдържание на наситени мазнини.",
+    "ПАЛМОВА МАЗНИНА": "Палмова мазнина - високо съдържание на наситени мазнини.",
+    "ХИДРОГЕНИРАНИ": "Хидрогенирани мазнини - източник на транс-мазнини.",
+    "АСПАРТАМ": "Аспартам - изкуствен подсладител.",
+    "ГЛУТАМАТ": "Глутамат - мощен овкусител, често свързван с главоболие.",
+    "ЗАХАР": "Внимание: Високо съдържание на захар.",
+    "НИТРИТ": "Нитрити - консерванти, потенциално карциногенни."
 }
 
 @st.cache_resource
 def load_ocr():
-    # Зареждаме само 'bg' и 'en'
     return easyocr.Reader(['bg', 'en'], gpu=False)
 
 reader = load_ocr()
 
-def extract_and_clean_e_numbers(text_list):
-    # Обединяваме и почистваме текста агресивно
-    full_text = " ".join(text_list)
-    # Поправяме най-честите OCR грешки преди да търсим
-    full_text = full_text.upper()
-    full_text = full_text.replace("Е", "E") # Кирилица -> Латиница
-    full_text = full_text.replace("€", "E") # Евро символ -> Е
-    full_text = full_text.replace("I", "1") # Буква I -> 1 (ако се появи в Е-номер)
-    full_text = full_text.replace("L", "1") # Буква L -> 1
-
-    # Регулярен израз за откриване на модел за Е-номер:
-    # 1. Започва с 'E'
-    # 2. Може да има интервали (\s*)
-    # 3. Един или повече цифри (\d+)
-    # 4. Може да има незадължителна буква след това ([A-Z]?)
-    # 5. Специално за E407a: Оправяме грешката O вместо 0 (E4O7A -> E407A)
-    cleaned_special = re.sub(r'(?<=E\d)O(?=\d)', '0', full_text)
-    full_text = cleaned_special.replace("E4O7A", "E407A")
-
-    pattern = re.compile(r'E\s*(\d+)([A-Z]?)')
+def process_text_and_find_ingredients(text_list):
+    # 1. Обединяваме и нормализираме текста
+    raw_text = " ".join(text_list).upper()
     
-    matches = pattern.findall(full_text)
+    # Почистване на OCR грешки
+    clean_text = raw_text.replace("Е", "E").replace("€", "E")
+    clean_text = clean_text.replace("I", "1").replace("L", "1")
     
-    found_clean_codes = []
-    for match in matches:
-        # Може да има празно място между цифрите и буквата, оправяме го
-        clean_code = "E" + match[0] + match[1]
-        # За случай като "E05" -> "E05" (махаме водещите нули за чиста проверка)
-        # found_clean_codes.append(re.sub(r'E0*', 'E', clean_code))
-        found_clean_codes.append(clean_code)
+    # Специална корекция за E407a (O вместо 0)
+    clean_text = re.sub(r'(?<=E4)O(?=7)', '0', clean_text)
+    clean_text = clean_text.replace("E4O7A", "E407A")
 
-    return found_clean_codes
+    found_results = {}
 
-# Интерфейс
-st.title("🛡️ Прецизен скенер за Е-номера")
-st.write("Качете снимка на етикета. Този модел е обучен да засича Е120, E407a и други с грешки.")
+    # --- СТЪПКА А: Търсене на Е-номера чрез Regex (заради грешки като "E 120") ---
+    e_pattern = re.compile(r'E\s*(\d+)([A-Z]?)')
+    e_matches = e_pattern.findall(clean_text)
+    for match in e_matches:
+        code = "E" + match[0] + match[1]
+        if code in INGREDIENT_DATABASE:
+            found_results[code] = INGREDIENT_DATABASE[code]
 
-uploaded_file = st.file_uploader("Изберете снимка на етикета...", type=["jpg", "jpeg", "png"])
+    # --- СТЪПКА Б: Търсене на цели думи ---
+    for key in INGREDIENT_DATABASE:
+        # Проверяваме дали ключът е дума (не започва с Е+цифра)
+        if not re.match(r'^E\d+', key):
+            if key in clean_text:
+                found_results[key] = INGREDIENT_DATABASE[key]
+
+    return found_results, clean_text
+
+# --- ИНТЕРФЕЙС ---
+st.title("🛡️ Пълен скенер за съставки")
+st.write("Качете снимка на етикета, за да за засечете Е-номера и вредни съставки (Малтодекстрин, мазнини и др.).")
+
+uploaded_file = st.file_uploader("Изберете снимка...", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
     image = Image.open(uploaded_file)
@@ -97,40 +86,21 @@ if uploaded_file is not None:
     
     with st.spinner('Анализирам текста...'):
         img_array = np.array(image)
-        # Четем текста с малко по-ниски нива на детайлност, за да хванем по-големи блокове
         results = reader.readtext(img_array, detail=0)
         
-        # Разпознаваме всички Е-номера
-        detected_e_codes = extract_and_clean_e_numbers(results)
-        
-        # Показаване на разпознатия текст за дебъгване
-        st.subheader("Извлечени сурови данни:")
-        with st.expander("Виж извлечените текстови блокове"):
-            st.write(results)
+        found_ingredients, processed_text = process_text_and_find_ingredients(results)
 
-        st.subheader("Засечени потенциални Е-номера (след почистване):")
-        st.write(detected_e_codes if detected_e_codes else "Няма открити Е-номера.")
-
-        # Проверка срещу базата данни
-        found_bad_stuff = []
-        # Важно: премахваме дубликатите и водещите нули при проверката, за да е точна
-        unique_codes = sorted(set(detected_e_codes))
-        
-        for code in unique_codes:
-            # Премахваме водещите нули само за проверката в базата (напр. Е005 -> E5)
-            # code_check = re.sub(r'E0+', 'E', code)
-            
-            # Търсим точен съвпадение (ключа в базата трябва да е без водещи нули, освен за Е0х)
-            if code in INGREDIENT_DATABASE:
-                found_bad_stuff.append((code, INGREDIENT_DATABASE[code]))
+        # Дебъг информация
+        with st.expander("Виж разпознатия текст"):
+            st.write(processed_text)
 
         st.divider()
-        if found_bad_stuff:
-            st.warning("⚠️ Внимание! В етикета са открити следните добавки:")
-            # Ползваме unique_codes за заглавията, за да е точно засичането от снимката
-            for code, description in sorted(found_bad_stuff):
-                st.write(f"- **{code}:** {description}")
-        elif detected_e_codes:
-            st.success(f"✅ Засечени са Е-номера, но никой от тях не е в нашия списък с вредни добавки.")
+
+        if found_ingredients:
+            st.warning("⚠️ Внимание! Открити са следните съставки:")
+            for item, desc in found_ingredients.items():
+                st.write(f"- **{item}**: {desc}")
         else:
-            st.success("✅ Не бяха открити никакви Е-номера на снимката.")
+            st.success("✅ Не бяха открити критични съставки от базата данни.")
+
+st.info("Съвет: Списъкът може да се допълва с нови думи в речника на програмата.")
