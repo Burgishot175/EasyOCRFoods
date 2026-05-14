@@ -4,20 +4,50 @@ import numpy as np
 from PIL import Image
 import re
 
+# Настройка на страницата
 st.set_page_config(page_title="🛡️ Скенер за съставки", layout="centered")
 
-# База данни с нормализирани ключове (на Кирилица и Латиница за Е-номерата)
+# ОБНОВЕНА БАЗА ДАННИ
 INGREDIENT_DATABASE = {
-    "E120": "Кармин/Кошенил - силен алерген от насекоми.",
-    "E316": "Натриев ериторбат - антиоксидант.",
-    "E407A": "Преработени морски водорасли Euchema - стабилизатор.",
-    "E412": "Гума гуар - сгъстител.",
-    "МАЛТОДЕКСТРИН": "Малтодекстрин - въглехидрат с много висок гликемичен индекс.",
-    "МАЛТОДЕКАТРИН": "Малтодекстрин - въглехидрат с много висок гликемичен индекс.",
+    # --- ОЦВЕТИТЕЛИ ---
+    "E102": "Тартразин - жълт оцветител, възможен алерген.",
+    "E104": "Хинолиново жълто - забранен в някои страни.",
+    "E110": "Сънсет жълто - риск от хиперактивност при деца.",
+    "E122": "Азорубин - синтетичен червен оцветител.",
+    "E123": "Амарант - силно ограничена употреба.",
+    "E127": "Еритрозин - съдържа йод, влияе на щитовидната жлеза.",
+    "E131": "Патент синьо V - синтетичен оцветител.",
+    "E133": "Брилянтно синьо - синтетичен оцветител.",
+    "E151": "Брилянтно черно BN - синтетичен оцветител.",
+    "E120": "Кармин/Кошенил - извлечен от насекоми, силен алерген.",
+
+    # --- КОНСЕРВАНТИ ---
+    "E211": "Натриев бензоат - избягвайте с витамин С.",
+    "E250": "Натриев нитрит - използва се в колбаси, потенциален карциноген.",
+    "E220": "Серен диоксид - сулфит, силен алерген.",
+    "E221": "Натриев сулфит.",
+    "E222": "Натриев хидрогенсулфит.",
+    "E223": "Натриев метабисулфит.",
+    "E224": "Калиев метабисулфит.",
+    "E225": "Калиев сулфит.",
+    "E226": "Калциев сулфит.",
+    "E227": "Калциев хидрогенсулфит.",
+    "E228": "Калиев хидрогенсулфит.",
+
+    # --- ПОДСЛАДИТЕЛИ И ОВКУСИТЕЛИ ---
+    "E621": "Мононатриев глутамат - овкусител, причинява главоболие.",
+    "E951": "Аспартам - изкуствен подсладител.",
+    "E420": "Сорбитол - подсладител, слабително действие в големи дози.",
+
+    # --- ВРЕДНИ СЪСТАВКИ (ТЕКСТ) ---
+    "МАЛТОДЕКСТРИН": "Малтодекстрин - висок гликемичен индекс.",
+    "МАЛТОДЕКАТРИН": "Малтодекстрин (засечен с грешка) - висок гликемичен индекс.", # Грешката от image_b08dd6.png
+    "MALLODEXTRIN": "Maltodextrin (detected error) - high glycemic index.", # Грешката от image_b08dd6.png
     "ПАЛМОВО": "Палмово масло/мазнина - високо съдържание на наситени мазнини.",
     "ХИДРОГЕНИРАНИ": "Хидрогенирани мазнини - източник на транс-мазнини.",
-    "ЗАХАР": "Внимание: Съдържа захар.",
-    "ГЛУТАМАТ": "Мононатриев глутамат - овкусител.",
+    "ЗАХАР": "Внимание: Високо съдържание на захар.",
+    "ГЛУТАМАТ": "Глутамат - овкусител.",
+    "АСПАРТАМ": "Аспартам - подсладител."
 }
 
 @st.cache_resource
@@ -26,71 +56,65 @@ def load_ocr():
 
 reader = load_ocr()
 
-def normalize_to_cyrillic(text):
-    """ Превръща латински букви, които приличат на кирилски, в кирилски """
-    caps = {
-        'A': 'А', 'B': 'В', 'E': 'Е', 'K': 'К', 'M': 'М', 'H': 'Н', 
-        'O': 'О', 'P': 'Р', 'C': 'С', 'T': 'Т', 'X': 'Х', 'Y': 'У'
-    }
-    for lat, cyr in caps.items():
-        text = text.replace(lat, cyr)
-    return text
-
-def process_text_and_find_ingredients(text_list):
-    # 1. Обединяваме и правим всичко в ГЛАВНИ букви
+def normalize_text(text_list):
     raw_text = " ".join(text_list).upper()
     
-    # 2. Подготовка за Е-номера (Латиница)
-    text_for_e = raw_text.replace("Е", "E").replace("€", "E").replace("I", "1").replace("O", "0")
+    # 1. Поправка за Е-номера (Латиница)
+    # Сменяме €, кирилско Е и грешни символи
+    text_for_e = raw_text.replace("Е", "E").replace("€", "E").replace("I", "1").replace("L", "1")
+    # Оправяме O вместо 0 (напр. Е4O7)
+    text_for_e = re.sub(r'(?<=E\d)O|O(?=\d)', '0', text_for_e)
     
-    # 3. Подготовка за думи (Кирилица)
-    # Нормализираме текста, за да хванем смесени букви (напр. МАЛТOдекстрин с латинско O)
-    text_for_words = normalize_to_cyrillic(raw_text)
+    # 2. Поправка за думи (Кирилица)
+    # Превръщаме визуално еднакви латински букви в кирилски
+    caps = {'A': 'А', 'B': 'В', 'E': 'Е', 'K': 'К', 'M': 'М', 'H': 'Н', 'O': 'О', 'P': 'Р', 'C': 'С', 'T': 'Т', 'X': 'Х', 'Y': 'У'}
+    text_for_words = raw_text
+    for lat, cyr in caps.items():
+        text_for_words = text_for_words.replace(lat, cyr)
     
-    # Махаме интервалите, за да хванем "МАЛТО ДЕКСТРИН"
-    text_no_spaces = text_for_words.replace(" ", "")
+    return text_for_e, text_for_words
 
-    found_results = {}
-
-    # --- Търсене на Е-номера (Regex) ---
-    e_pattern = re.compile(r'E\s*(\d+)([A-ZА-Я]?)')
+def scan_for_ingredients(text_for_e, text_for_words):
+    found = {}
+    
+    # Търсене на Е-номера (Regex)
+    e_pattern = re.compile(r'E\s*(\d+)([A-Z]?)')
     e_matches = e_pattern.findall(text_for_e)
     for match in e_matches:
         code = "E" + match[0] + match[1]
         if code in INGREDIENT_DATABASE:
-            found_results[code] = INGREDIENT_DATABASE[code]
+            found[code] = INGREDIENT_DATABASE[code]
 
-    # --- Търсене на думи (Кирилица) ---
+    # Търсене на думи и части от думи
+    combined_text = text_for_words + " " + text_for_words.replace(" ", "")
     for key, desc in INGREDIENT_DATABASE.items():
-        if not key.startswith("E"):
-            if key in text_for_words or key in text_no_spaces:
-                found_results[key] = desc
+        if not key.startswith("E") or len(key) > 4: # Търси думи или сложни Е-номера
+            if key in combined_text:
+                found[key] = desc
+                
+    return found
 
-    return found_results, text_for_words
+# ИНТЕРФЕЙС
+st.title("🛡️ Скенер за съставки")
 
-# --- Интерфейс ---
-st.title("🛡️ Професионален скенер за етикети")
+uploaded_file = st.file_uploader("Качете снимка на етикет", type=["jpg", "png", "jpeg"])
 
-uploaded_file = st.file_uploader("Качете снимка на етикета...", type=["jpg", "jpeg", "png"])
-
-if uploaded_file is not None:
-    image = Image.open(uploaded_file)
-    st.image(image, use_container_width=True)
+if uploaded_file:
+    img = Image.open(uploaded_file)
+    st.image(img, use_container_width=True)
     
-    with st.spinner('Анализирам всяка дума...'):
-        img_array = np.array(image)
-        results = reader.readtext(img_array, detail=0)
+    with st.spinner('Анализиране...'):
+        results = reader.readtext(np.array(img), detail=0)
+        t_e, t_w = normalize_text(results)
+        found = scan_for_ingredients(t_e, t_w)
         
-        found, debug_text = process_text_and_find_ingredients(results)
-
-        with st.expander("Виж разпознатия текст (пречистен)"):
-            st.write(debug_text)
-
+        with st.expander("Виж разчетения текст"):
+            st.write(t_w)
+        
         st.divider()
-
         if found:
-            st.warning("⚠️ Открити съставки:")
+            st.warning("⚠️ Открити вредни съставки:")
             for item, desc in found.items():
                 st.write(f"- **{item}**: {desc}")
         else:
-            st.success("✅ Не бяха открити критични съставки.")
+            st.success("✅ Не са открити критични съставки.")
